@@ -1,6 +1,7 @@
 package com.github.hhhzzzsss.songplayer;
 
 import com.github.hhhzzzsss.songplayer.playing.Stage;
+import com.github.hhhzzzsss.songplayer.playing.NoteblockDetectionMode;
 import com.google.gson.Gson;
 
 import java.io.BufferedReader;
@@ -32,6 +33,7 @@ public class Config {
     public boolean autoCleanup = false;
     public boolean survivalOnly = false;
     public boolean flightNoclip = false;
+    public NoteblockDetectionMode noteblockDetectionMode = NoteblockDetectionMode.NBT_DATA;
 
     public static Config getConfig() {
         if (config == null) {

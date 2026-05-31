@@ -7,6 +7,8 @@ import com.github.hhhzzzsss.songplayer.song.Instrument;
 import com.github.hhhzzzsss.songplayer.song.Song;
 import net.minecraft.block.Block;
 import net.minecraft.block.BlockState;
+import net.minecraft.block.Blocks;
+import net.minecraft.block.FallingBlock;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.network.packet.c2s.play.PlayerMoveC2SPacket;
 import net.minecraft.util.math.BlockPos;
@@ -31,8 +33,11 @@ public class Stage {
 
 	// Not used in survival-only mode
 	public LinkedList<BlockPos> requiredBreaks = new LinkedList<>();
+	public LinkedHashMap<BlockPos, BlockState> requiredInstrumentBlocks = new LinkedHashMap<>();
 	public TreeSet<Integer> missingNotes = new TreeSet<>();
 	public int totalMissingNotes = 0;
+
+	private static final BlockState FALLING_BLOCK_STABILIZER = Blocks.STONE.getDefaultState();
 
 	// Only used in survival-only mode
 	public LinkedList<BlockPos> requiredClicks = new LinkedList<>();
@@ -63,6 +68,7 @@ public class Stage {
 	public void checkBuildStatus(Song song) {
 		noteblockPositions.clear();
 		missingNotes.clear();
+		requiredInstrumentBlocks.clear();
 
 		// Add all required notes to missingNotes
 		for (int i=0; i<400; i++) {
@@ -115,30 +121,47 @@ public class Stage {
 			}
 		});
 
+		if (Config.getConfig().noteblockDetectionMode == NoteblockDetectionMode.BLOCK_BASED) {
+			filterBlockBasedNoteblockLocations(noteblockLocations);
+		}
+
 		// Remove already-existing notes from missingNotes, adding their positions to noteblockPositions, and create a list of unused noteblock locations
 		ArrayList<BlockPos> unusedNoteblockLocations = new ArrayList<>();
-		for (BlockPos nbPos : noteblockLocations) {
-			BlockState bs = SongPlayer.MC.world.getBlockState(nbPos);
-			int blockId = Block.getRawIdFromState(bs);
-			if (blockId >= SongPlayer.NOTEBLOCK_BASE_ID && blockId < SongPlayer.NOTEBLOCK_BASE_ID+800) {
-				int noteId = (blockId-SongPlayer.NOTEBLOCK_BASE_ID)/2;
-				if (missingNotes.contains(noteId)) {
-					missingNotes.remove(noteId);
-					noteblockPositions.put(noteId, nbPos);
+
+		// 根据配置选择检测方式
+		if (Config.getConfig().noteblockDetectionMode == NoteblockDetectionMode.NBT_DATA) {
+			// 原有的NBT检测方式
+			for (BlockPos nbPos : noteblockLocations) {
+				BlockState bs = SongPlayer.MC.world.getBlockState(nbPos);
+				int blockId = Block.getRawIdFromState(bs);
+				if (blockId >= SongPlayer.NOTEBLOCK_BASE_ID && blockId < SongPlayer.NOTEBLOCK_BASE_ID+800) {
+					int noteId = (blockId-SongPlayer.NOTEBLOCK_BASE_ID)/2;
+					if (missingNotes.contains(noteId)) {
+						missingNotes.remove(noteId);
+						noteblockPositions.put(noteId, nbPos);
+					}
+					else {
+						unusedNoteblockLocations.add(nbPos);
+					}
 				}
 				else {
 					unusedNoteblockLocations.add(nbPos);
 				}
 			}
-			else {
-				unusedNoteblockLocations.add(nbPos);
-			}
+		} else {
+			// 基于方块的检测方式
+			detectNoteblocksByBlock(noteblockLocations, unusedNoteblockLocations);
 		}
 
 		// Cull noteblocks that won't fit in stage
+		int missingNoteCountBeforeCull = missingNotes.size();
 		if (missingNotes.size() > unusedNoteblockLocations.size()) {
 			while (missingNotes.size() > unusedNoteblockLocations.size()) {
 				missingNotes.pollLast();
+			}
+			int skippedNotes = missingNoteCountBeforeCull - missingNotes.size();
+			if (Config.getConfig().noteblockDetectionMode == NoteblockDetectionMode.BLOCK_BASED && skippedNotes > 0) {
+				Util.showChatMessage("§eBlock-based noteblock mode only has room for §6" + unusedNoteblockLocations.size() + " §emissing notes on this stage; skipping §6" + skippedNotes + "§e.");
 			}
 		}
 
@@ -148,6 +171,8 @@ public class Stage {
 			BlockPos bp = unusedNoteblockLocations.get(idx++);
 			noteblockPositions.put(noteId, bp);
 		}
+
+		populateRequiredInstrumentBlocks(breakLocations);
 
 		for (BlockPos bp : noteblockPositions.values()) { // Optional break locations
 			breakLocations.add(bp.up());
@@ -541,13 +566,17 @@ public class Stage {
 
 	public boolean nothingToBuild() {
 		if (!Config.getConfig().survivalOnly) {
-			return requiredBreaks.isEmpty() && missingNotes.isEmpty();
+			return requiredBreaks.isEmpty() && requiredInstrumentBlocks.isEmpty() && missingNotes.isEmpty();
 		} else {
 			return requiredClicks.isEmpty();
 		}
 	}
 
 	public boolean hasBreakingModification() {
+		if (Config.getConfig().noteblockDetectionMode == NoteblockDetectionMode.BLOCK_BASED) {
+			return hasBlockBasedModification();
+		}
+
 		for (Map.Entry<Integer, BlockPos> entry : noteblockPositions.entrySet()) {
 			BlockState bs = SongPlayer.MC.world.getBlockState(entry.getValue());
 			int blockId = Block.getRawIdFromState(bs);
@@ -574,7 +603,163 @@ public class Stage {
 		return false;
 	}
 
+	private boolean hasBlockBasedModification() {
+		for (Map.Entry<Integer, BlockPos> entry : noteblockPositions.entrySet()) {
+			int targetNoteId = entry.getKey();
+			BlockPos bp = entry.getValue();
+			BlockState bs = SongPlayer.MC.world.getBlockState(bp);
+			if (bs.getBlock() != Blocks.NOTE_BLOCK) {
+				return true;
+			}
+
+			int targetPitch = targetNoteId % 25;
+			if (getNoteblockPitch(bs) != targetPitch) {
+				return true;
+			}
+
+			Instrument targetInstrument = Instrument.getInstrumentFromId(targetNoteId / 25);
+			BlockState belowBs = SongPlayer.MC.world.getBlockState(bp.down());
+			if (!BlockBasedInstrumentDetector.supportsInstrument(belowBs, targetInstrument)) {
+				return true;
+			}
+			if (requiresStabilizer(belowBs) && needsStabilizer(bp.down())) {
+				return true;
+			}
+
+			BlockState aboveBs = SongPlayer.MC.world.getBlockState(bp.up());
+			if (!aboveBs.isAir() && !aboveBs.isLiquid()) {
+				return true;
+			}
+		}
+		return false;
+	}
+
 	public Vec3d getOriginBottomCenter() {
 		return Vec3d.ofBottomCenter(position);
+	}
+
+	private void filterBlockBasedNoteblockLocations(ArrayList<BlockPos> noteblockLocations) {
+		ArrayList<BlockPos> filteredLocations = new ArrayList<>();
+		for (BlockPos candidate : noteblockLocations) {
+			if (wouldCollideWithPlayer(candidate) || wouldCollideWithPlayer(candidate.down()) || wouldCollideWithPlayer(candidate.down(2))) {
+				continue;
+			}
+
+			boolean conflicts = false;
+			for (BlockPos selected : filteredLocations) {
+				if (candidate.getX() == selected.getX()
+						&& candidate.getZ() == selected.getZ()
+						&& Math.abs(candidate.getY() - selected.getY()) < 3) {
+					conflicts = true;
+					break;
+				}
+			}
+
+			if (!conflicts) {
+				filteredLocations.add(candidate);
+			}
+		}
+
+		noteblockLocations.clear();
+		noteblockLocations.addAll(filteredLocations);
+	}
+
+	private boolean wouldCollideWithPlayer(BlockPos bp) {
+		return bp.equals(position) || bp.equals(position.up());
+	}
+
+	private void populateRequiredInstrumentBlocks(Set<BlockPos> breakLocations) {
+		if (Config.getConfig().noteblockDetectionMode != NoteblockDetectionMode.BLOCK_BASED) {
+			return;
+		}
+
+		HashSet<BlockPos> supportPositions = new HashSet<>();
+		for (BlockPos noteblockPos : noteblockPositions.values()) {
+			supportPositions.add(noteblockPos.down());
+		}
+		breakLocations.removeAll(supportPositions);
+
+		for (Map.Entry<Integer, BlockPos> entry : noteblockPositions.entrySet()) {
+			int noteId = entry.getKey();
+			BlockPos noteblockPos = entry.getValue();
+			Instrument instrument = Instrument.getInstrumentFromId(noteId / 25);
+			BlockPos supportPos = noteblockPos.down();
+			BlockState desiredSupportState = BlockBasedInstrumentDetector.getSupportBlockState(instrument);
+			BlockState currentSupportState = SongPlayer.MC.world.getBlockState(supportPos);
+			if (BlockBasedInstrumentDetector.supportsInstrument(currentSupportState, instrument)) {
+				addFallingBlockStabilizerIfNeeded(supportPos, currentSupportState);
+				continue;
+			}
+
+			addFallingBlockStabilizerIfNeeded(supportPos, desiredSupportState);
+			requiredInstrumentBlocks.put(supportPos, desiredSupportState);
+			if (!currentSupportState.isAir() && !currentSupportState.isLiquid()) {
+				breakLocations.add(supportPos);
+			}
+		}
+	}
+
+	private void addFallingBlockStabilizerIfNeeded(BlockPos supportPos, BlockState supportState) {
+		if (requiresStabilizer(supportState) && needsStabilizer(supportPos)) {
+			requiredInstrumentBlocks.put(supportPos.down(), FALLING_BLOCK_STABILIZER);
+		}
+	}
+
+	private boolean requiresStabilizer(BlockState blockState) {
+		return blockState.getBlock() instanceof FallingBlock;
+	}
+
+	private boolean needsStabilizer(BlockPos supportPos) {
+		return SongPlayer.MC.world.getBlockState(supportPos.down()).isAir();
+	}
+
+	/**
+	 * 基于方块的音符盒检测方法
+	 * 通过检测音符盒和其下方的方块来判断音色和音调
+	 */
+	private void detectNoteblocksByBlock(ArrayList<BlockPos> noteblockLocations, ArrayList<BlockPos> unusedNoteblockLocations) {
+		for (BlockPos nbPos : noteblockLocations) {
+			BlockState bs = SongPlayer.MC.world.getBlockState(nbPos);
+
+			// 检查是否为音符盒
+			if (bs.getBlock() == Blocks.NOTE_BLOCK) {
+				// 获取音符盒下方的方块
+				BlockState belowBlockState = SongPlayer.MC.world.getBlockState(nbPos.down());
+
+				// 根据下方方块获取乐器类型
+				Instrument instrument = BlockBasedInstrumentDetector.getInstrumentFromBlock(belowBlockState);
+				if (!BlockBasedInstrumentDetector.supportsInstrument(belowBlockState, instrument)) {
+					unusedNoteblockLocations.add(nbPos);
+					continue;
+				}
+
+				// 获取音符盒的音调（通过NBT或者默认为0）
+				int pitch = getNoteblockPitch(bs);
+
+				// 计算noteId (instrumentId * 25 + pitch)
+				int noteId = instrument.instrumentId * 25 + pitch;
+
+				if (noteId >= 0 && noteId < 400 && missingNotes.contains(noteId)) {
+					missingNotes.remove(noteId);
+					noteblockPositions.put(noteId, nbPos);
+				} else {
+					unusedNoteblockLocations.add(nbPos);
+				}
+			} else {
+				unusedNoteblockLocations.add(nbPos);
+			}
+		}
+	}
+
+	/**
+	 * 获取音符盒的音调
+	 */
+	private int getNoteblockPitch(BlockState noteblockState) {
+		int blockId = Block.getRawIdFromState(noteblockState);
+		int noteId = (blockId - SongPlayer.NOTEBLOCK_BASE_ID) / 2;
+		if (noteId < 0 || noteId >= 400) {
+			return 0;
+		}
+		return noteId % 25;
 	}
 }

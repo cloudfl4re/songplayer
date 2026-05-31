@@ -302,6 +302,22 @@ public class SongHandler {
                     attackBlock(bp);
                 }
                 buildEndDelay = 20;
+            } else if (!stage.requiredInstrumentBlocks.isEmpty()) {
+                incrementPlaceAllowance();
+                while (consumePlaceAllowance()) {
+                    if (stage.requiredInstrumentBlocks.isEmpty()) continue;
+                    Iterator<Map.Entry<BlockPos, BlockState>> iterator = stage.requiredInstrumentBlocks.entrySet().iterator();
+                    Map.Entry<BlockPos, BlockState> entry = iterator.next();
+                    iterator.remove();
+                    BlockPos bp = entry.getKey();
+                    BlockState desiredBlockState = entry.getValue();
+                    Instrument instrument = BlockBasedInstrumentDetector.getInstrumentFromBlock(desiredBlockState);
+                    if (!BlockBasedInstrumentDetector.supportsInstrument(world.getBlockState(bp), instrument)) {
+                        holdBlock(desiredBlockState, buildSlot);
+                        placeBlock(bp);
+                    }
+                }
+                buildEndDelay = 20;
             } else if (!stage.missingNotes.isEmpty()) {
                 incrementPlaceAllowance();
                 while (consumePlaceAllowance()) {
@@ -313,8 +329,9 @@ public class SongHandler {
                     }
                     int blockId = Block.getRawIdFromState(world.getBlockState(bp));
                     int currentNoteId = (blockId - SongPlayer.NOTEBLOCK_BASE_ID) / 2;
-                    if (currentNoteId != desiredNoteId) {
-                        holdNoteblock(desiredNoteId, buildSlot);
+                    boolean shouldPlace = Config.getConfig().noteblockDetectionMode == NoteblockDetectionMode.BLOCK_BASED || currentNoteId != desiredNoteId;
+                    if (shouldPlace) {
+                        holdNoteblock(desiredNoteId, buildSlot, Config.getConfig().noteblockDetectionMode == NoteblockDetectionMode.NBT_DATA);
                         if (blockId != 0) {
                             attackBlock(bp);
                         }
@@ -769,17 +786,22 @@ public class SongHandler {
 
     private final String[] instrumentNames = {"harp", "basedrum", "snare", "hat", "bass", "flute", "bell", "guitar", "chime", "xylophone", "iron_xylophone", "cow_bell", "didgeridoo", "bit", "banjo", "pling"};
     private void holdNoteblock(int id, int slot) {
+        holdNoteblock(id, slot, true);
+    }
+    private void holdNoteblock(int id, int slot, boolean includeInstrument) {
         PlayerInventory inventory = SongPlayer.MC.player.getInventory();
         inventory.setSelectedSlot(slot);
         ((ClientPlayerInteractionManagerAccessor) SongPlayer.MC.interactionManager).invokeSyncSelectedSlot();
         int instrument = id/25;
         int note = id%25;
         ItemStack noteblockStack = Items.NOTE_BLOCK.getDefaultStack();
-        noteblockStack.set(DataComponentTypes.BLOCK_STATE, new BlockStateComponent(Map.of(
-                "instrument", instrumentNames[instrument],
-                "note", Integer.toString(note)
-        )));
-        inventory.getMainStacks().set(slot, noteblockStack);
+        Map<String, String> stateMap = new TreeMap<>();
+        if (includeInstrument) {
+            stateMap.put("instrument", instrumentNames[instrument]);
+        }
+        stateMap.put("note", Integer.toString(note));
+        noteblockStack.set(DataComponentTypes.BLOCK_STATE, new BlockStateComponent(stateMap));
+        inventory.setStack(slot, noteblockStack);
         SongPlayer.MC.interactionManager.clickCreativeStack(noteblockStack, 36 + slot);
     }
     private void holdBlock(BlockState bs, int slot) {
@@ -794,7 +816,7 @@ public class SongHandler {
             stateMap.put(property.getName(), net.minecraft.util.Util.getValueAsString(property, value));
         }
         stack.set(DataComponentTypes.BLOCK_STATE, new BlockStateComponent(stateMap));
-        inventory.getMainStacks().set(slot, stack);
+        inventory.setStack(slot, stack);
         SongPlayer.MC.interactionManager.clickCreativeStack(stack, 36 + slot);
     }
     private void placeBlock(BlockPos bp) {
@@ -826,6 +848,7 @@ public class SongHandler {
     }
     private void recordStageBlocks() {
         recordBlocks(stage.requiredBreaks);
+        recordBlocks(stage.requiredInstrumentBlocks.keySet());
         recordBlocks(stage.missingNotes
                 .stream()
                 .map(noteId -> stage.noteblockPositions.get(noteId))

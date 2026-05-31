@@ -30,9 +30,13 @@ public class SongItemUtils {
 
     public static void addSongItemDisplay(ItemStack stack) {
         getSongItemTag(stack).ifPresent((songItemTag) -> {
-            String name = songItemTag.getString(DISPLAY_NAME_KEY)
-                    .or(() -> songItemTag.getString(FILE_NAME_KEY))
-                    .orElse("unnamed");
+            String name = songItemTag.getString(DISPLAY_NAME_KEY, "");
+            if (name.isEmpty()) {
+                name = songItemTag.getString(FILE_NAME_KEY, "");
+            }
+            if (name.isEmpty()) {
+                name = "unnamed";
+            }
             Util.setItemName(stack,
                     Util.getStyledText(name, Style.EMPTY.withColor(Formatting.DARK_AQUA).withItalic(false))
             );
@@ -47,14 +51,19 @@ public class SongItemUtils {
 
     public static void updateSongItemTag(ItemStack stack, Consumer<NbtCompound> nbtSetter) {
         NbtComponent.set(DataComponentTypes.CUSTOM_DATA, stack, (itemNbt) -> {
-            itemNbt.getCompound(SONG_ITEM_KEY).ifPresent(nbtSetter);
+            if (itemNbt.contains(SONG_ITEM_KEY)) {
+                nbtSetter.accept(itemNbt.getCompoundOrEmpty(SONG_ITEM_KEY));
+            }
         });
     }
 
     public static Optional<NbtCompound> getSongItemTag(ItemStack stack) {
-        return stack.getOrDefault(DataComponentTypes.CUSTOM_DATA, NbtComponent.DEFAULT)
-                .copyNbt()
-                .getCompound(SONG_ITEM_KEY);
+        NbtCompound itemNbt = stack.getOrDefault(DataComponentTypes.CUSTOM_DATA, NbtComponent.DEFAULT)
+                .copyNbt();
+        if (!itemNbt.contains(SONG_ITEM_KEY)) {
+            return Optional.empty();
+        }
+        return itemNbt.getCompound(SONG_ITEM_KEY);
     }
 
     public static boolean isSongItem(ItemStack stack) {
@@ -63,7 +72,8 @@ public class SongItemUtils {
 
     public static byte[] getSongData(ItemStack stack) throws IllegalArgumentException {
         return getSongItemTag(stack)
-                .flatMap((songItemTag) -> songItemTag.getString(SONG_DATA_KEY))
+                .map((songItemTag) -> songItemTag.getString(SONG_DATA_KEY, ""))
+                .filter((songData) -> !songData.isEmpty())
                 .map((songData) -> Base64.getDecoder().decode(songData))
                 .orElse(null);
     }

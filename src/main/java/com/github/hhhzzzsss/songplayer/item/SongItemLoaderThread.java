@@ -21,7 +21,10 @@ public class SongItemLoaderThread extends SongLoaderThread {
         }
         NbtCompound songItemNbt = SongItemUtils.getSongItemTag(stack)
                 .orElseThrow(() -> new IOException("Song item tag is missing"));
-        displayName = songItemNbt.getString(SongItemUtils.DISPLAY_NAME_KEY).orElse(null);
+        displayName = songItemNbt.getString(SongItemUtils.DISPLAY_NAME_KEY, "");
+        if (displayName.isEmpty()) {
+            displayName = null;
+        }
         filename = displayName;
     }
 

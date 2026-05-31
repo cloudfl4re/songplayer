@@ -4,6 +4,7 @@ import com.github.hhhzzzsss.songplayer.item.SongItemCreatorThread;
 import com.github.hhhzzzsss.songplayer.item.SongItemUtils;
 import com.github.hhhzzzsss.songplayer.playing.SongHandler;
 import com.github.hhhzzzsss.songplayer.playing.Stage;
+import com.github.hhhzzzsss.songplayer.playing.NoteblockDetectionMode;
 import com.github.hhhzzzsss.songplayer.song.Note;
 import com.github.hhhzzzsss.songplayer.song.Playlist;
 import com.github.hhhzzzsss.songplayer.song.Song;
@@ -59,6 +60,7 @@ public class CommandProcessor {
 		commands.add(new announcementCommand());
 		commands.add(new toggleSurvivalOnlyCommand());
 		commands.add(new toggleFlightNoclipCommand());
+		commands.add(new setNoteblockBuildModeCommand());
 		commands.add(new songItemCommand());
 		commands.add(new testSongCommand());
 
@@ -1160,7 +1162,7 @@ public class CommandProcessor {
 					Util.showChatMessage("§6There is nothing to clean up");
 					return true;
 				}
-				if (MC.player.getEntityPos().squaredDistanceTo(lastStage.getOriginBottomCenter()) > 3*3 || !lastStage.worldName.equals(Util.getWorldName())) {
+				if (MC.player.squaredDistanceTo(lastStage.getOriginBottomCenter()) > 3*3 || !lastStage.worldName.equals(Util.getWorldName())) {
 					String coordStr = String.format(
 							"%d %d %d",
 							lastStage.position.getX(), lastStage.position.getY(), lastStage.position.getZ()
@@ -1388,6 +1390,51 @@ public class CommandProcessor {
 				default:
 					return null;
 			}
+		}
+	}
+
+	private static class setNoteblockBuildModeCommand extends Command {
+		public String getName() {
+			return "setNoteblockBuildMode";
+		}
+		public String[] getAliases() {
+			return new String[]{"noteblockMode", "buildMode", "setNoteblockDetectionMode", "detectionMode"};
+		}
+		public String[] getSyntax() {
+			return new String[]{"<NBT_DATA | BLOCK_BASED>"};
+		}
+		public String getDescription() {
+			return "Sets how automatic noteblock stages are built. NBT_DATA uses note block state; BLOCK_BASED uses blocks below note blocks for instruments.";
+		}
+		public boolean processCommand(String args) {
+			if (args.length() == 0) {
+				NoteblockDetectionMode currentMode = Config.getConfig().noteblockDetectionMode;
+				Util.showChatMessage("§6Current noteblock build mode: §3" + currentMode.getDisplayName());
+				Util.showChatMessage("§6Available modes:");
+				Util.showChatMessage("  §3NBT_DATA §7- Uses note block state for instrument and pitch");
+				Util.showChatMessage("  §3BLOCK_BASED §7- Uses blocks below note blocks for instruments");
+				return true;
+			} else {
+				String mode = args.trim().toUpperCase();
+				try {
+					NoteblockDetectionMode detectionMode = NoteblockDetectionMode.valueOf(mode);
+					Config.getConfig().noteblockDetectionMode = detectionMode;
+					Util.showChatMessage("§6Set noteblock build mode to §3" + detectionMode.getDisplayName());
+					Config.saveConfigWithErrorHandling();
+					return true;
+				} catch (IllegalArgumentException e) {
+					Util.showChatMessage("§cInvalid noteblock build mode: " + mode);
+					Util.showChatMessage("§6Available modes: NBT_DATA, BLOCK_BASED");
+					return true;
+				}
+			}
+		}
+
+		public CompletableFuture<Suggestions> getSuggestions(String args, SuggestionsBuilder suggestionsBuilder) {
+			if (!args.contains(" ")) {
+				return CommandSource.suggestMatching(Arrays.stream(NoteblockDetectionMode.values()).map(Enum::name), suggestionsBuilder);
+			}
+			return null;
 		}
 	}
 

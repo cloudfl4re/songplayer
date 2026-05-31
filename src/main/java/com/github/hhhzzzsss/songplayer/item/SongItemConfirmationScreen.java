@@ -2,7 +2,6 @@ package com.github.hhhzzzsss.songplayer.item;
 
 import com.github.hhhzzzsss.songplayer.Util;
 import com.github.hhhzzzsss.songplayer.playing.SongHandler;
-import net.minecraft.client.font.MultilineText;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.client.gui.widget.ButtonWidget;
@@ -15,8 +14,8 @@ import java.util.Arrays;
 public class SongItemConfirmationScreen extends Screen {
     private ItemStack stack;
     private SongItemLoaderThread loaderThread;
-    private MultilineText unloadedText;
-    private MultilineText loadedText;
+    private Text[] unloadedText;
+    private Text[] loadedText;
     private boolean loaded = false;
 
     private static final Text CONFIRM = Text.literal("Play");
@@ -33,7 +32,7 @@ public class SongItemConfirmationScreen extends Screen {
     protected void init() {
         super.init();
         String unloadedMessage = "§7Loading song...";
-        this.unloadedText = MultilineText.create(this.textRenderer, Text.literal(unloadedMessage));
+        this.unloadedText = new Text[]{Text.literal(unloadedMessage)};
     }
 
     private void addButtons(int y) {
@@ -68,9 +67,9 @@ public class SongItemConfirmationScreen extends Screen {
                         String.format("§7Avg notes per second: %s%.2f", getNumberColor(loaderThread.avgNotesPerSecond), loaderThread.avgNotesPerSecond),
                 };
                 Text[] messageList = Arrays.stream(loadedMessages).map(Text::literal).toArray(Text[]::new);
-                this.loadedText = MultilineText.create(this.textRenderer, messageList);
+                this.loadedText = messageList;
 
-                int loadedTextHeight = this.loadedText.getLineCount() * this.textRenderer.fontHeight;
+                int loadedTextHeight = this.loadedText.length * this.textRenderer.fontHeight;
                 addButtons(60 + loadedTextHeight + 12);
 
                 loaded = true;
@@ -78,10 +77,16 @@ public class SongItemConfirmationScreen extends Screen {
         }
 
         if (loaded) {
-            loadedText.draw(context, MultilineText.Alignment.CENTER, this.width / 2, 60, 9, true, -1);
+            drawCenteredTextLines(context, loadedText, 60);
         }
         else {
-            unloadedText.draw(context, MultilineText.Alignment.CENTER, this.width / 2, 60, 9, true, -1);
+            drawCenteredTextLines(context, unloadedText, 60);
+        }
+    }
+
+    private void drawCenteredTextLines(DrawContext context, Text[] lines, int y) {
+        for (int i = 0; i < lines.length; i++) {
+            context.drawCenteredTextWithShadow(textRenderer, lines[i], this.width / 2, y + i * this.textRenderer.fontHeight, 0xFFFFFF);
         }
     }
 

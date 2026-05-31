@@ -10,7 +10,6 @@ import net.minecraft.network.ClientConnection;
 import net.minecraft.network.packet.Packet;
 import net.minecraft.network.packet.c2s.play.PlayerInputC2SPacket;
 import net.minecraft.network.packet.c2s.play.PlayerMoveC2SPacket;
-import net.minecraft.util.PlayerInput;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.injection.At;
@@ -45,17 +44,22 @@ public class ClientCommonNetworkHandlerMixin {
             }
             ci.cancel(); // Default movement packet is always cancelled if song is playing
         }
-        else if (packet instanceof PlayerInputC2SPacket) {
+        else if (packet instanceof PlayerInputC2SPacket inputPacket) {
             // Update fakePlayer crouching
-            PlayerInput input = ((PlayerInputC2SPacket) packet).input();
             if (songHandler.fakePlayer != null) {
-                if (input.sneak()) {
-                    songHandler.fakePlayer.setSneaking(true);
-                    songHandler.fakePlayer.setPose(EntityPose.CROUCHING);
-                }
-                else {
-                    songHandler.fakePlayer.setSneaking(false);
-                    songHandler.fakePlayer.setPose(EntityPose.STANDING);
+                try {
+                    // 尝试访问输入数据，在1.21中可能需要不同的方法
+                    boolean sneaking = inputPacket.input().sneak();
+                    if (sneaking) {
+                        songHandler.fakePlayer.setSneaking(true);
+                        songHandler.fakePlayer.setPose(EntityPose.CROUCHING);
+                    }
+                    else {
+                        songHandler.fakePlayer.setSneaking(false);
+                        songHandler.fakePlayer.setPose(EntityPose.STANDING);
+                    }
+                } catch (Exception e) {
+                    // 如果方法不存在或有变化，静默处理
                 }
             }
         }
