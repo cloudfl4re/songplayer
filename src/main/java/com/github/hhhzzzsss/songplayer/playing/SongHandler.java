@@ -238,9 +238,9 @@ public class SongHandler {
     }
 
     public void startCleanup() {
+        clearCleanupQueues();
         dirty = true;
         cleaningUp = true;
-        lastCleanupHash = 0;
         setCreativeIfNeeded();
         getAndSaveBuildSlot();
         lastStage.sendMovementPacketToStagePosition();
@@ -473,7 +473,14 @@ public class SongHandler {
     private LinkedList<BlockPos> cleanupBreakList = new LinkedList<>();
     private LinkedList<BlockPos> cleanupPlaceList = new LinkedList<>();
     private ArrayList<BlockPos> cleanupUnplaceableBlocks = new ArrayList<>();
-    private int lastCleanupHash = 0;
+    private int lastCleanupHash = Integer.MIN_VALUE;
+    private void clearCleanupQueues() {
+        cleanupBreakList.clear();
+        cleanupPlaceList.clear();
+        cleanupUnplaceableBlocks.clear();
+        cleanupTotalBlocksToPlace = 0;
+        lastCleanupHash = Integer.MIN_VALUE;
+    }
     private void handleCleanup() {
         setCleanupProgressDisplay();
 
@@ -496,9 +503,11 @@ public class SongHandler {
                 int cleanupHash = 31 * cleanupBreakList.hashCode() + cleanupPlaceList.hashCode();
                 if (cleanupHash == lastCleanupHash) { // If loop is detected, stop
                     cleaningUp = false;
+                    int unplaceableBlockCount = cleanupUnplaceableBlocks.size();
+                    clearCleanupQueues();
                     Util.showChatMessage("§6Stopped restoring original blocks due to infinite loop being detected");
-                    if (!cleanupUnplaceableBlocks.isEmpty()) {
-                        Util.showChatMessage(String.format("§3%d §6blocks could not be restored", cleanupUnplaceableBlocks.size()));
+                    if (unplaceableBlockCount > 0) {
+                        Util.showChatMessage(String.format("§3%d §6blocks could not be restored", unplaceableBlockCount));
                     }
                     return;
                 } else {
@@ -522,8 +531,15 @@ public class SongHandler {
             while (consumePlaceAllowance()) {
                 if (cleanupPlaceList.isEmpty()) continue;
                 BlockPos bp = cleanupPlaceList.pollFirst();
+                if (!originalBlocks.containsKey(bp)) {
+                    continue;
+                }
                 BlockState actualBlockState = world.getBlockState(bp);
                 BlockState desiredBlockState = originalBlocks.get(bp);
+                if (desiredBlockState == null) {
+                    originalBlocks.remove(bp);
+                    continue;
+                }
                 if (actualBlockState != desiredBlockState) {
                     holdBlock(desiredBlockState, buildSlot);
                     if (!actualBlockState.isAir() && !actualBlockState.isLiquid()) {
@@ -534,11 +550,13 @@ public class SongHandler {
             }
             buildEndDelay = 20;
         } else {
+            int unplaceableBlockCount = cleanupUnplaceableBlocks.size();
             originalBlocks.clear();
             cleaningUp = false;
+            clearCleanupQueues();
             Util.showChatMessage("§6Finished restoring original blocks");
-            if (!cleanupUnplaceableBlocks.isEmpty()) {
-                Util.showChatMessage(String.format("§3%d §6blocks could not be restored", cleanupUnplaceableBlocks.size()));
+            if (unplaceableBlockCount > 0) {
+                Util.showChatMessage(String.format("§3%d §6blocks could not be restored", unplaceableBlockCount));
             }
         }
     }
@@ -549,9 +567,16 @@ public class SongHandler {
         cleanupBreakList.clear();
         cleanupUnplaceableBlocks.clear();
 
-        for (BlockPos bp : originalBlocks.keySet()) {
+        Iterator<Map.Entry<BlockPos, BlockState>> originalBlockIterator = originalBlocks.entrySet().iterator();
+        while (originalBlockIterator.hasNext()) {
+            Map.Entry<BlockPos, BlockState> originalBlockEntry = originalBlockIterator.next();
+            BlockPos bp = originalBlockEntry.getKey();
+            BlockState desiredBlockState = originalBlockEntry.getValue();
+            if (desiredBlockState == null) {
+                originalBlockIterator.remove();
+                continue;
+            }
             BlockState actualBlockState = world.getBlockState(bp);
-            BlockState desiredBlockState = originalBlocks.get(bp);
             if (actualBlockState != desiredBlockState) {
                 if (isPlaceable(desiredBlockState)) {
                     cleanupPlaceList.add(bp);
@@ -564,6 +589,11 @@ public class SongHandler {
 
         cleanupBreakList = cleanupBreakList.stream()
                 .sorted((a, b) -> {
+                    int cleanupPriority = Integer.compare(getCleanupBreakPriority(a), getCleanupBreakPriority(b));
+                    if (cleanupPriority != 0) {
+                        return cleanupPriority;
+                    }
+
                     // First sort by gravity
                     boolean a_grav = SongPlayer.MC.world.getBlockState(a).getBlock() instanceof FallingBlock;
                     boolean b_grav = SongPlayer.MC.world.getBlockState(b).getBlock() instanceof FallingBlock;
@@ -668,6 +698,22 @@ public class SongHandler {
             cleanupPlaceList.clear();
         }
     }
+    private int getCleanupBreakPriority(BlockPos bp) {
+        if (lastStage != null && lastStage.noteblockDetectionMode == NoteblockDetectionMode.BLOCK_BASED) {
+            for (BlockPos noteblockPos : lastStage.noteblockPositions.values()) {
+                if (bp.equals(noteblockPos.down())) {
+                    return 0; // Instrument support block
+                }
+                if (bp.equals(noteblockPos)) {
+                    return 1; // Note block
+                }
+                if (bp.equals(noteblockPos.down(2))) {
+                    return 3; // Falling-block stabilizer
+                }
+            }
+        }
+        return 2;
+    }
     private void setCleanupProgressDisplay() {
         MutableText buildText = Text.empty()
                 .append(Text.literal("Rebuilding original blocks | " ).formatted(Formatting.GOLD))
@@ -682,6 +728,7 @@ public class SongHandler {
         songQueue.clear();
         stage = null;
         buildSlot = -1;
+        clearCleanupQueues();
         removeFakePlayer();
         cleaningUp = false;
         dirty = false;

@@ -29,6 +29,7 @@ public class Stage {
 	public String worldName;
 	public String serverIdentifier;
 	public BlockPos position;
+	public NoteblockDetectionMode noteblockDetectionMode;
 	public HashMap<Integer, BlockPos> noteblockPositions = new HashMap<>();
 
 	// Not used in survival-only mode
@@ -44,6 +45,7 @@ public class Stage {
 
 	public Stage() {
 		position = MC.player.getBlockPos();
+		noteblockDetectionMode = Config.getConfig().noteblockDetectionMode;
 
 		// Information tracked for checking cleanup conditions
 		worldName = Util.getWorldName();
