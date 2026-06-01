@@ -6,6 +6,7 @@ import java.util.Collections;
 public class Song {
 	public ArrayList<Note> notes = new ArrayList<>();
 	public String name;
+	public String sourceLocation;
 	public int position = 0; // Current note index
 	public boolean[] requiredNotes = new boolean[400];
 	public boolean looping = false;

@@ -86,6 +86,7 @@ public class SongLoaderThread extends Thread{
 			if (song == null) {
 				throw new IOException("Invalid song format");
 			}
+			song.sourceLocation = location != null ? location : songPath.toString();
 		}
 		catch (Exception e) {
 			exception = e;

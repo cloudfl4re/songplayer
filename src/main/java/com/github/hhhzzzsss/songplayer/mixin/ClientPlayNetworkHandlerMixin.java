@@ -26,7 +26,7 @@ public class ClientPlayNetworkHandlerMixin {
 	
 	@Inject(at = @At("TAIL"), method = "onGameJoin(Lnet/minecraft/network/packet/s2c/play/GameJoinS2CPacket;)V")
 	public void onOnGameJoin(GameJoinS2CPacket packet, CallbackInfo ci) {
-		SongHandler.getInstance().reset();
+		SongHandler.getInstance().onGameJoin();
 	}
 
 	@Inject(at = @At("TAIL"), method = "onPlayerRespawn(Lnet/minecraft/network/packet/s2c/play/PlayerRespawnS2CPacket;)V")

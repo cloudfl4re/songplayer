@@ -28,6 +28,7 @@ import net.minecraft.util.math.Vec3d;
 import net.minecraft.world.GameMode;
 
 import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -58,8 +59,13 @@ public class SongHandler {
     public GameMode originalGamemode = GameMode.CREATIVE;
 
     boolean playlistChecked = false;
+    private PlaybackRecoveryState pendingRecoveryState = null;
+    private long lastRecoverySaveTime = 0;
+    private boolean savedNotIngameRecovery = false;
 
     public void onUpdate(boolean tick) {
+        savedNotIngameRecovery = false;
+
         if (!cleaningUp) {
             // Check current playlist and load song from it if necessary
             if (currentSong == null && currentPlaylist != null && currentPlaylist.loaded) {
@@ -91,8 +97,17 @@ public class SongHandler {
             if (loaderThread != null && !loaderThread.isAlive()) {
                 if (loaderThread.exception != null) {
                     Util.showChatMessage("§cFailed to load song: §4" + loaderThread.exception.getMessage());
+                    if (pendingRecoveryState != null) {
+                        Util.showChatMessage("§6Could not reload recovered song; starting cleanup instead.");
+                        pendingRecoveryState.restoreStage(this, false);
+                        pendingRecoveryState = null;
+                        startCleanup();
+                    }
                 } else {
-                    if (currentSong == null) {
+                    if (pendingRecoveryState != null) {
+                        resumeRecoveredSong(loaderThread.song, pendingRecoveryState);
+                        pendingRecoveryState = null;
+                    } else if (currentSong == null) {
                         setSong(loaderThread.song);
                     } else {
                         queueSong(loaderThread.song);
@@ -163,6 +178,10 @@ public class SongHandler {
                 // When doing nothing else, record original gamemode
                 originalGamemode = SongPlayer.MC.interactionManager.getCurrentGameMode();
             }
+        }
+
+        if (tick) {
+            saveRecoveryIfNeeded();
         }
     }
 
@@ -723,15 +742,24 @@ public class SongHandler {
 
     // Resets all internal states like currentSong, and songQueue, which stops all actions
     public void reset() {
+        reset(true);
+    }
+    private void reset(boolean clearRecovery) {
         currentSong = null;
         currentPlaylist = null;
         songQueue.clear();
+        pendingRecoveryState = null;
+        loaderThread = null;
+        savedNotIngameRecovery = false;
         stage = null;
         buildSlot = -1;
         clearCleanupQueues();
         removeFakePlayer();
         cleaningUp = false;
         dirty = false;
+        if (clearRecovery) {
+            PlaybackRecoveryState.delete();
+        }
     }
     public void restoreStateAndReset() {
         restoreStateAndReset(true);
@@ -773,9 +801,73 @@ public class SongHandler {
 
     // Runs every frame when player is not ingame
     public void onNotIngame() {
+        if (!savedNotIngameRecovery) {
+            saveRecoveryNow();
+            savedNotIngameRecovery = true;
+        }
         currentSong = null;
         currentPlaylist = null;
         songQueue.clear();
+    }
+
+    public void onGameJoin() {
+        reset(false);
+
+        PlaybackRecoveryState recoveryState = PlaybackRecoveryState.load();
+        if (recoveryState == null || !recoveryState.matchesCurrentWorld()) {
+            return;
+        }
+
+        if (recoveryState.cleaningUp || !recoveryState.hasSongSource()) {
+            recoveryState.restoreStage(this, false);
+            Util.showChatMessage("§6Recovered SongPlayer stage; starting cleanup.");
+            startCleanup();
+            return;
+        }
+
+        try {
+            recoveryState.restoreStage(this, true);
+            pendingRecoveryState = recoveryState;
+            loaderThread = createRecoveryLoader(recoveryState.songSourceLocation);
+            loaderThread.start();
+            Util.showChatMessage("§6Recovered SongPlayer session; reloading song to resume.");
+        } catch (Exception e) {
+            recoveryState.restoreStage(this, false);
+            pendingRecoveryState = null;
+            Util.showChatMessage("§6Could not reload recovered song; starting cleanup instead.");
+            startCleanup();
+        }
+    }
+
+    private SongLoaderThread createRecoveryLoader(String sourceLocation) throws IOException {
+        Path sourcePath = Path.of(sourceLocation);
+        if (Files.exists(sourcePath)) {
+            return new SongLoaderThread(sourcePath);
+        }
+        return new SongLoaderThread(sourceLocation);
+    }
+
+    private void resumeRecoveredSong(Song song, PlaybackRecoveryState recoveryState) {
+        recoveryState.restoreStage(this, true);
+        setSong(song);
+        currentSong.setTime(Math.min(recoveryState.songTime, currentSong.length));
+        currentSong.looping = recoveryState.songLooping;
+        currentSong.loopPosition = recoveryState.songLoopPosition;
+        currentSong.loopCount = recoveryState.songLoopCount;
+        currentSong.currentLoop = recoveryState.songCurrentLoop;
+        Util.showChatMessage("§6Resumed recovered song at §3" + Util.formatTime(currentSong.time));
+    }
+
+    private void saveRecoveryIfNeeded() {
+        long now = System.currentTimeMillis();
+        if (now - lastRecoverySaveTime >= 1000) {
+            saveRecoveryNow();
+        }
+    }
+
+    private void saveRecoveryNow() {
+        PlaybackRecoveryState.save(this);
+        lastRecoverySaveTime = System.currentTimeMillis();
     }
 
     // Create stage if it doesn't exist and move the player to it
