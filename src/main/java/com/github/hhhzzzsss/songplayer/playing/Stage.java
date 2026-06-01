@@ -688,6 +688,12 @@ public class Stage {
 			BlockPos supportPos = noteblockPos.down();
 			BlockState desiredSupportState = BlockBasedInstrumentDetector.getSupportBlockState(instrument);
 			BlockState currentSupportState = SongPlayer.MC.world.getBlockState(supportPos);
+			if (instrument == Instrument.HARP) {
+				if (!currentSupportState.isAir() && !currentSupportState.isLiquid()) {
+					breakLocations.add(supportPos);
+				}
+				continue;
+			}
 			if (BlockBasedInstrumentDetector.supportsInstrument(currentSupportState, instrument)) {
 				addFallingBlockStabilizerIfNeeded(supportPos, currentSupportState);
 				continue;

@@ -13,7 +13,7 @@ import net.minecraft.registry.tag.BlockTags;
 public class BlockBasedInstrumentDetector {
     public static BlockState getSupportBlockState(Instrument instrument) {
         return switch (instrument) {
-            case HARP -> Blocks.DIRT.getDefaultState();
+            case HARP -> Blocks.AIR.getDefaultState();
             case BASEDRUM -> Blocks.STONE.getDefaultState();
             case SNARE -> Blocks.SAND.getDefaultState();
             case HAT -> Blocks.GLASS.getDefaultState();
@@ -33,6 +33,9 @@ public class BlockBasedInstrumentDetector {
     }
 
     public static boolean supportsInstrument(BlockState belowBlockState, Instrument instrument) {
+        if (instrument == Instrument.HARP) {
+            return belowBlockState.isAir() || belowBlockState.isLiquid();
+        }
         if (belowBlockState.isAir() || belowBlockState.isLiquid()) {
             return false;
         }
