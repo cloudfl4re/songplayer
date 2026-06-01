@@ -61,6 +61,7 @@ public class CommandProcessor {
 		commands.add(new toggleSurvivalOnlyCommand());
 		commands.add(new toggleFlightNoclipCommand());
 		commands.add(new setNoteblockBuildModeCommand());
+		commands.add(new setNbsMappingModeCommand());
 		commands.add(new songItemCommand());
 		commands.add(new testSongCommand());
 
@@ -1433,6 +1434,63 @@ public class CommandProcessor {
 		public CompletableFuture<Suggestions> getSuggestions(String args, SuggestionsBuilder suggestionsBuilder) {
 			if (!args.contains(" ")) {
 				return CommandSource.suggestMatching(Arrays.stream(NoteblockDetectionMode.values()).map(Enum::name), suggestionsBuilder);
+			}
+			return null;
+		}
+	}
+
+	private static class setNbsMappingModeCommand extends Command {
+		public String getName() {
+			return "setNbsMappingMode";
+		}
+		public String[] getAliases() {
+			return new String[]{"nbsMappingMode", "strictNbsMapping", "exactNbsMapping", "nbsExact"};
+		}
+		public String[] getSyntax() {
+			return new String[]{"<STRICT | COMPATIBLE>"};
+		}
+		public String getDescription() {
+			return "Sets how NBS files are imported. STRICT keeps NBS instruments and skips unsupported notes instead of remapping them; COMPATIBLE keeps the old octave-fitting behavior.";
+		}
+		public boolean processCommand(String args) {
+			String mode = args.trim().toUpperCase(Locale.ROOT);
+			if (mode.length() == 0) {
+				Util.showChatMessage("\u00a76Current NBS mapping mode: \u00a73" + (Config.getConfig().strictNbsMapping ? "STRICT" : "COMPATIBLE"));
+				Util.showChatMessage("\u00a76Available modes: STRICT, COMPATIBLE");
+				return true;
+			}
+
+			switch (mode) {
+				case "STRICT":
+				case "EXACT":
+				case "ON":
+				case "TRUE":
+				case "ENABLE":
+				case "ENABLED":
+					Config.getConfig().strictNbsMapping = true;
+					Util.showChatMessage("\u00a76Set NBS mapping mode to \u00a73STRICT");
+					Config.saveConfigWithErrorHandling();
+					return true;
+				case "COMPATIBLE":
+				case "DEFAULT":
+				case "OFF":
+				case "FALSE":
+				case "DISABLE":
+				case "DISABLED":
+					Config.getConfig().strictNbsMapping = false;
+					Util.showChatMessage("\u00a76Set NBS mapping mode to \u00a73COMPATIBLE");
+					Config.saveConfigWithErrorHandling();
+					return true;
+				default:
+					Util.showChatMessage("\u00a7cInvalid NBS mapping mode: " + args);
+					Util.showChatMessage("\u00a76Available modes: STRICT, COMPATIBLE");
+					return true;
+			}
+		}
+
+		public CompletableFuture<Suggestions> getSuggestions(String args, SuggestionsBuilder suggestionsBuilder) {
+			if (!args.contains(" ")) {
+				return CommandSource.suggestMatching(new String[]{"STRICT", "COMPATIBLE"}, suggestionsBuilder);
 			}
 			return null;
 		}

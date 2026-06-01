@@ -34,6 +34,7 @@ public class Config {
     public boolean survivalOnly = false;
     public boolean flightNoclip = false;
     public NoteblockDetectionMode noteblockDetectionMode = NoteblockDetectionMode.NBT_DATA;
+    public boolean strictNbsMapping = false;
 
     public static Config getConfig() {
         if (config == null) {

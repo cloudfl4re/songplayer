@@ -1,5 +1,6 @@
 package com.github.hhhzzzsss.songplayer.conversion;
 
+import com.github.hhhzzzsss.songplayer.Config;
 import com.github.hhhzzzsss.songplayer.song.Instrument;
 import com.github.hhhzzzsss.songplayer.song.Note;
 import com.github.hhhzzzsss.songplayer.song.Song;
@@ -8,6 +9,7 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.util.ArrayList;
+import java.util.Locale;
 
 public class NBSConverter {
     public static Instrument[] instrumentIndex = new Instrument[] {
@@ -32,18 +34,25 @@ public class NBSConverter {
     private static class NBSNote {
         public int tick;
         public short layer;
-        public byte instrument;
-        public byte key;
-        public byte velocity = 100;
-        public byte panning = 100;
+        public int instrument;
+        public int key;
+        public int velocity = 100;
+        public int panning = 100;
         public short pitch = 0;
     }
 
     private static class NBSLayer {
         public String name;
-        public byte lock = 0;
-        public byte volume;
-        public byte stereo = 100;
+        public int lock = 0;
+        public int volume;
+        public int stereo = 100;
+    }
+
+    private static class NBSCustomInstrument {
+        public String name;
+        public String soundFile;
+        public int key;
+        public boolean pressKey;
     }
 
     public static Song getSongFromBytes(byte[] bytes, String fileName) throws IOException {
@@ -52,14 +61,14 @@ public class NBSConverter {
 
         short songLength = 0;
         byte format = 0;
-        byte vanillaInstrumentCount = 0;
+        int vanillaInstrumentCount = 10;
         songLength = buffer.getShort(); // If it's not 0, then it uses the old format
         if (songLength == 0) {
             format = buffer.get();
         }
 
         if (format >= 1) {
-            vanillaInstrumentCount = buffer.get();
+            vanillaInstrumentCount = Byte.toUnsignedInt(buffer.get());
         }
         if (format >= 3) {
             songLength = buffer.getShort();
@@ -105,11 +114,11 @@ public class NBSConverter {
                 NBSNote note = new NBSNote();
                 note.tick = tick;
                 note.layer = layer;
-                note.instrument = buffer.get();
-                note.key = buffer.get();
+                note.instrument = Byte.toUnsignedInt(buffer.get());
+                note.key = Byte.toUnsignedInt(buffer.get());
                 if (format >= 4) {
-                    note.velocity = buffer.get();
-                    note.panning = buffer.get();
+                    note.velocity = Byte.toUnsignedInt(buffer.get());
+                    note.panning = Byte.toUnsignedInt(buffer.get());
                     note.pitch = buffer.getShort();
                 }
                 nbsNotes.add(note);
@@ -122,13 +131,26 @@ public class NBSConverter {
                 NBSLayer layer = new NBSLayer();
                 layer.name = getString(buffer, bytes.length);
                 if (format >= 4) {
-                    layer.lock = buffer.get();
+                    layer.lock = Byte.toUnsignedInt(buffer.get());
                 }
-                layer.volume = buffer.get();
+                layer.volume = Byte.toUnsignedInt(buffer.get());
                 if (format >= 2) {
-                    layer.stereo = buffer.get();
+                    layer.stereo = Byte.toUnsignedInt(buffer.get());
                 }
                 nbsLayers.add(layer);
+            }
+        }
+
+        ArrayList<NBSCustomInstrument> customInstruments = new ArrayList<>();
+        if (buffer.hasRemaining()) {
+            int customInstrumentCount = Byte.toUnsignedInt(buffer.get());
+            for (int i=0; i<customInstrumentCount; i++) {
+                NBSCustomInstrument customInstrument = new NBSCustomInstrument();
+                customInstrument.name = getString(buffer, bytes.length);
+                customInstrument.soundFile = getString(buffer, bytes.length);
+                customInstrument.key = Byte.toUnsignedInt(buffer.get());
+                customInstrument.pressKey = buffer.get() != 0;
+                customInstruments.add(customInstrument);
             }
         }
 
@@ -138,35 +160,131 @@ public class NBSConverter {
             song.loopPosition = getMilliTime(loopStartTick, tempo);
             song.loopCount = maxLoopCount;
         }
+        boolean strictMapping = Config.getConfig().strictNbsMapping;
         for (NBSNote note : nbsNotes) {
-            Instrument instrument;
-            if (note.instrument < instrumentIndex.length) {
-                instrument = instrumentIndex[note.instrument];
-            }
-            else {
+            Instrument instrument = getInstrument(note.instrument, vanillaInstrumentCount, customInstruments, strictMapping);
+            if (instrument == null) {
                 continue;
             }
 
-            while (note.key < 33) {
-                note.key += 12;
+            int key = getEffectiveKey(note, vanillaInstrumentCount, customInstruments, strictMapping);
+            if (strictMapping) {
+                if (key < 33 || key > 57) {
+                    continue;
+                }
             }
-            while (note.key > 57) {
-                note.key -= 12;
+            else {
+                while (key < 33) {
+                    key += 12;
+                }
+                while (key > 57) {
+                    key -= 12;
+                }
             }
 
-            byte layerVolume = 100;
+            int layerVolume = 100;
             if (nbsLayers.size() > note.layer) {
                 layerVolume = nbsLayers.get(note.layer).volume;
             }
 
-            int pitch = note.key-33;
+            int pitch = key-33;
             int noteId = pitch + instrument.instrumentId*25;
             song.add(new Note(noteId, getMilliTime(note.tick, tempo), layerVolume));
         }
 
-        song.length = song.get(song.size()-1).time + 50;
+        if (song.size() > 0) {
+            song.length = song.get(song.size()-1).time + 50;
+        }
 
         return song;
+    }
+
+    private static Instrument getInstrument(int nbsInstrument, int vanillaInstrumentCount, ArrayList<NBSCustomInstrument> customInstruments, boolean strictMapping) {
+        if (!strictMapping) {
+            return nbsInstrument < instrumentIndex.length ? instrumentIndex[nbsInstrument] : null;
+        }
+
+        if (nbsInstrument < vanillaInstrumentCount) {
+            return nbsInstrument < instrumentIndex.length ? instrumentIndex[nbsInstrument] : null;
+        }
+
+        NBSCustomInstrument customInstrument = getCustomInstrument(nbsInstrument, vanillaInstrumentCount, customInstruments);
+        if (customInstrument == null) {
+            return null;
+        }
+
+        Instrument instrument = getInstrumentFromName(customInstrument.name);
+        if (instrument != null) {
+            return instrument;
+        }
+        return getInstrumentFromName(customInstrument.soundFile);
+    }
+
+    private static int getEffectiveKey(NBSNote note, int vanillaInstrumentCount, ArrayList<NBSCustomInstrument> customInstruments, boolean strictMapping) {
+        if (!strictMapping) {
+            return note.key;
+        }
+
+        NBSCustomInstrument customInstrument = getCustomInstrument(note.instrument, vanillaInstrumentCount, customInstruments);
+        if (customInstrument == null) {
+            return note.key;
+        }
+
+        return note.key + customInstrument.key - 45;
+    }
+
+    private static NBSCustomInstrument getCustomInstrument(int nbsInstrument, int vanillaInstrumentCount, ArrayList<NBSCustomInstrument> customInstruments) {
+        int customInstrumentIndex = nbsInstrument - vanillaInstrumentCount;
+        if (customInstrumentIndex < 0 || customInstrumentIndex >= customInstruments.size()) {
+            return null;
+        }
+        return customInstruments.get(customInstrumentIndex);
+    }
+
+    private static Instrument getInstrumentFromName(String name) {
+        return switch (normalizeInstrumentName(name)) {
+            case "harp", "piano" -> Instrument.HARP;
+            case "bass", "doublebass" -> Instrument.BASS;
+            case "basedrum", "bassdrum", "bd" -> Instrument.BASEDRUM;
+            case "snare", "snaredrum" -> Instrument.SNARE;
+            case "hat", "hihat", "click" -> Instrument.HAT;
+            case "guitar" -> Instrument.GUITAR;
+            case "flute" -> Instrument.FLUTE;
+            case "bell" -> Instrument.BELL;
+            case "chime" -> Instrument.CHIME;
+            case "xylophone" -> Instrument.XYLOPHONE;
+            case "ironxylophone" -> Instrument.IRON_XYLOPHONE;
+            case "cowbell" -> Instrument.COW_BELL;
+            case "didgeridoo" -> Instrument.DIDGERIDOO;
+            case "bit" -> Instrument.BIT;
+            case "banjo" -> Instrument.BANJO;
+            case "pling" -> Instrument.PLING;
+            default -> null;
+        };
+    }
+
+    private static String normalizeInstrumentName(String name) {
+        if (name == null) {
+            return "";
+        }
+
+        String normalized = name.toLowerCase(Locale.ROOT).replace('\\', '/');
+        int slashIndex = normalized.lastIndexOf('/');
+        if (slashIndex >= 0) {
+            normalized = normalized.substring(slashIndex + 1);
+        }
+        if (normalized.endsWith(".ogg")) {
+            normalized = normalized.substring(0, normalized.length() - 4);
+        }
+        int namespaceIndex = normalized.lastIndexOf(':');
+        if (namespaceIndex >= 0) {
+            normalized = normalized.substring(namespaceIndex + 1);
+        }
+        int dotIndex = normalized.lastIndexOf('.');
+        if (dotIndex >= 0) {
+            normalized = normalized.substring(dotIndex + 1);
+        }
+        return normalized.replaceAll("[^a-z0-9]", "");
     }
 
     private static String getString(ByteBuffer buffer, int maxSize) throws IOException {
