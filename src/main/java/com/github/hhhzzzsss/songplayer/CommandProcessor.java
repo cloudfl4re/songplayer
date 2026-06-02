@@ -873,7 +873,7 @@ public class CommandProcessor {
 			return new String[]{"setStage", "stageType"};
 		}
 		public String[] getSyntax() {
-			return new String[]{"<DEFAULT | WIDE | SPHERICAL>"};
+			return new String[]{"<WIDE | SPECIAL>"};
 		}
 		public String getDescription() {
 			return "Sets the type of noteblock stage to build";
@@ -881,7 +881,7 @@ public class CommandProcessor {
 		public boolean processCommand(String args) {
 			if (args.length() > 0) {
 				try {
-					Stage.StageType stageType = Stage.StageType.valueOf(args.toUpperCase(Locale.ROOT));
+					Stage.StageType stageType = parseStageType(args);
 					Config.getConfig().stageType = stageType;
 					Util.showChatMessage("§6Set stage type to §3" + stageType.name());
 					Config.saveConfigWithErrorHandling();
@@ -894,6 +894,14 @@ public class CommandProcessor {
 			else {
 				return false;
 			}
+		}
+		private Stage.StageType parseStageType(String args) {
+			String stageTypeName = args.toUpperCase(Locale.ROOT);
+			return switch (stageTypeName) {
+				case "DEFAULT", "NORMAL" -> Stage.StageType.WIDE;
+				case "SPHERICAL", "SPEICAL" -> Stage.StageType.SPECIAL;
+				default -> Stage.StageType.valueOf(stageTypeName);
+			};
 		}
 		public CompletableFuture<Suggestions> getSuggestions(String args, SuggestionsBuilder suggestionsBuilder) {
 			if (!args.contains(" ")) {

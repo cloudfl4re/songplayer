@@ -21,9 +21,8 @@ public class Stage {
 	private final MinecraftClient MC = SongPlayer.MC;
 
 	public enum StageType {
-		DEFAULT,
 		WIDE,
-		SPHERICAL,
+		SPECIAL,
 	}
 
 	public String worldName;
@@ -35,6 +34,7 @@ public class Stage {
 	// Not used in survival-only mode
 	public LinkedList<BlockPos> requiredBreaks = new LinkedList<>();
 	public LinkedHashMap<BlockPos, BlockState> requiredInstrumentBlocks = new LinkedHashMap<>();
+	public HashSet<BlockPos> fallingBlockStabilizerPositions = new HashSet<>();
 	public TreeSet<Integer> missingNotes = new TreeSet<>();
 	public int totalMissingNotes = 0;
 
@@ -71,6 +71,7 @@ public class Stage {
 		noteblockPositions.clear();
 		missingNotes.clear();
 		requiredInstrumentBlocks.clear();
+		fallingBlockStabilizerPositions.clear();
 
 		// Add all required notes to missingNotes
 		for (int i=0; i<400; i++) {
@@ -81,14 +82,15 @@ public class Stage {
 
 		ArrayList<BlockPos> noteblockLocations = new ArrayList<>();
 		HashSet<BlockPos> breakLocations = new HashSet<>();
-		switch (Config.getConfig().stageType) {
-			case DEFAULT -> loadDefaultBlocks(noteblockLocations, breakLocations);
+		StageType stageType = getConfiguredStageType();
+		switch (stageType) {
 			case WIDE -> loadWideBlocks(noteblockLocations, breakLocations);
-			case SPHERICAL -> loadSphericalBlocks(noteblockLocations, breakLocations);
+			case SPECIAL -> loadSphericalBlocks(noteblockLocations, breakLocations);
 		}
 
 		// Sorting noteblock and break locations
-		noteblockLocations.sort((a, b) -> {
+		if (stageType != StageType.WIDE) {
+			noteblockLocations.sort((a, b) -> {
 			// First sort by y
 			int a_dy = a.getY() - position.getY();
 			int b_dy = b.getY() - position.getY();
@@ -121,7 +123,8 @@ public class Stage {
 			} else {
 				return 0;
 			}
-		});
+			});
+		}
 
 		if (Config.getConfig().noteblockDetectionMode == NoteblockDetectionMode.BLOCK_BASED) {
 			filterBlockBasedNoteblockLocations(noteblockLocations);
@@ -138,7 +141,7 @@ public class Stage {
 				int blockId = Block.getRawIdFromState(bs);
 				if (blockId >= SongPlayer.NOTEBLOCK_BASE_ID && blockId < SongPlayer.NOTEBLOCK_BASE_ID+800) {
 					int noteId = (blockId-SongPlayer.NOTEBLOCK_BASE_ID)/2;
-					if (missingNotes.contains(noteId)) {
+					if (missingNotes.contains(noteId) && canLocationUseNoteId(nbPos, noteId)) {
 						missingNotes.remove(noteId);
 						noteblockPositions.put(noteId, nbPos);
 					}
@@ -168,10 +171,14 @@ public class Stage {
 		}
 
 		// Populate missing noteblocks into the unused noteblock locations
-		int idx = 0;
-		for (int noteId : missingNotes) {
-			BlockPos bp = unusedNoteblockLocations.get(idx++);
-			noteblockPositions.put(noteId, bp);
+		int missingNoteCountAfterCull = missingNotes.size();
+		LinkedHashMap<Integer, BlockPos> newNoteblockPositions = assignMissingNoteblocks(unusedNoteblockLocations);
+		missingNotes.clear();
+		missingNotes.addAll(newNoteblockPositions.keySet());
+		noteblockPositions.putAll(newNoteblockPositions);
+		int skippedByLayerRules = missingNoteCountAfterCull - missingNotes.size();
+		if (Config.getConfig().noteblockDetectionMode == NoteblockDetectionMode.BLOCK_BASED && skippedByLayerRules > 0) {
+			Util.showChatMessage("搂eWide stage reserved the top harp layer; skipping 搂6" + skippedByLayerRules + "搂e notes that do not fit lower layers.");
 		}
 
 		populateRequiredInstrumentBlocks(breakLocations);
@@ -302,57 +309,226 @@ public class Stage {
 		}
 	}
 
-	void loadDefaultBlocks(Collection<BlockPos> noteblockLocations, Collection<BlockPos> breakLocations) {
-		for (int dx = -4; dx <= 4; dx++) {
-			for (int dz = -4; dz <= 4; dz++) {
-				if (Math.abs(dx) == 4 && Math.abs(dz) == 4)  {
-					noteblockLocations.add(new BlockPos(position.getX() + dx, position.getY() + 0, position.getZ() + dz));
-					noteblockLocations.add(new BlockPos(position.getX() + dx, position.getY() + 2, position.getZ() + dz));
-					breakLocations.add(new BlockPos(position.getX() + dx, position.getY() + 1, position.getZ() + dz));
+	private StageType getConfiguredStageType() {
+		StageType stageType = Config.getConfig().stageType;
+		return stageType == null ? StageType.WIDE : stageType;
+	}
+
+	private void sortLayerByDistance(ArrayList<BlockPos> layer) {
+		layer.sort((a, b) -> {
+			int aDx = a.getX() - position.getX();
+			int aDz = a.getZ() - position.getZ();
+			int bDx = b.getX() - position.getX();
+			int bDz = b.getZ() - position.getZ();
+			int aDist = aDx*aDx + aDz*aDz;
+			int bDist = bDx*bDx + bDz*bDz;
+			if (aDist < bDist) {
+				return -1;
+			} else if (aDist > bDist) {
+				return 1;
+			}
+			double aAngle = Math.atan2(aDz, aDx);
+			double bAngle = Math.atan2(bDz, bDx);
+			return Double.compare(aAngle, bAngle);
+		});
+	}
+
+	private LinkedHashMap<Integer, BlockPos> assignMissingNoteblocks(ArrayList<BlockPos> unusedNoteblockLocations) {
+		LinkedHashMap<Integer, BlockPos> assignedPositions = new LinkedHashMap<>();
+		if (getConfiguredStageType() != StageType.WIDE) {
+			Iterator<BlockPos> locationIterator = unusedNoteblockLocations.iterator();
+			for (int noteId : missingNotes) {
+				if (!locationIterator.hasNext()) {
+					break;
 				}
-				else {
-					noteblockLocations.add(new BlockPos(position.getX() + dx, position.getY() - 1, position.getZ() + dz));
-					noteblockLocations.add(new BlockPos(position.getX() + dx, position.getY() + 2, position.getZ() + dz));
-					breakLocations.add(new BlockPos(position.getX() + dx, position.getY() + 0, position.getZ() + dz));
-					breakLocations.add(new BlockPos(position.getX() + dx, position.getY() + 1, position.getZ() + dz));
-				}
+				assignedPositions.put(noteId, locationIterator.next());
+			}
+			return assignedPositions;
+		}
+
+		ArrayList<BlockPos> harpOnlyLocations = new ArrayList<>();
+		ArrayList<BlockPos> generalLocations = new ArrayList<>();
+		for (BlockPos bp : unusedNoteblockLocations) {
+			if (isWideTopHarpLayer(bp)) {
+				harpOnlyLocations.add(bp);
+			} else {
+				generalLocations.add(bp);
 			}
 		}
-		for (int dx = -4; dx <= 4; dx++) {
-			for (int dz = -4; dz <= 4; dz++) {
-				if (withinBreakingDist(dx, -3, dz)) {
-					noteblockLocations.add(new BlockPos(position.getX() + dx, position.getY() - 3, position.getZ() + dz));
+
+		Iterator<BlockPos> harpIterator = harpOnlyLocations.iterator();
+		ArrayList<Integer> fallingSupportNotes = new ArrayList<>();
+		ArrayList<Integer> remainingNotes = new ArrayList<>();
+		for (int noteId : missingNotes) {
+			if (noteId / 25 == Instrument.HARP.instrumentId) {
+				if (harpIterator.hasNext()) {
+					assignedPositions.put(noteId, harpIterator.next());
 				}
-				if (withinBreakingDist(dx, 4, dz)) {
-					noteblockLocations.add(new BlockPos(position.getX() + dx, position.getY() + 4, position.getZ() + dz));
-				}
+			} else if (Config.getConfig().noteblockDetectionMode == NoteblockDetectionMode.BLOCK_BASED && usesFallingSupport(noteId)) {
+				fallingSupportNotes.add(noteId);
+			} else {
+				remainingNotes.add(noteId);
 			}
 		}
+
+		ArrayList<BlockPos> fallingSupportLocations = new ArrayList<>(generalLocations);
+		fallingSupportLocations.sort((a, b) -> {
+			int priorityCompare = Integer.compare(getFallingSupportLocationPriority(a), getFallingSupportLocationPriority(b));
+			if (priorityCompare != 0) {
+				return priorityCompare;
+			}
+			int aDx = a.getX() - position.getX();
+			int aDz = a.getZ() - position.getZ();
+			int bDx = b.getX() - position.getX();
+			int bDz = b.getZ() - position.getZ();
+			int aDist = aDx*aDx + aDz*aDz;
+			int bDist = bDx*bDx + bDz*bDz;
+			if (aDist != bDist) {
+				return Integer.compare(aDist, bDist);
+			}
+			return Integer.compare(a.getY(), b.getY());
+		});
+		Iterator<BlockPos> fallingSupportIterator = fallingSupportLocations.iterator();
+		HashSet<BlockPos> assignedGeneralLocations = new HashSet<>();
+		for (int noteId : fallingSupportNotes) {
+			while (fallingSupportIterator.hasNext()) {
+				BlockPos bp = fallingSupportIterator.next();
+				if (assignedGeneralLocations.contains(bp) || wouldWideStabilizerBlockBottomLayer(bp.down(2))) {
+					continue;
+				}
+				assignedPositions.put(noteId, bp);
+				assignedGeneralLocations.add(bp);
+				break;
+			}
+		}
+		Iterator<BlockPos> generalIterator = generalLocations.iterator();
+		for (int noteId : remainingNotes) {
+			while (generalIterator.hasNext()) {
+				BlockPos bp = generalIterator.next();
+				if (!assignedGeneralLocations.contains(bp)) {
+					assignedPositions.put(noteId, bp);
+					break;
+				}
+			}
+			if (!generalIterator.hasNext()) {
+				break;
+			}
+		}
+		return assignedPositions;
+	}
+
+	private boolean usesFallingSupport(int noteId) {
+		Instrument instrument = Instrument.getInstrumentFromId(noteId / 25);
+		return BlockBasedInstrumentDetector.getSupportBlockState(instrument).getBlock() instanceof FallingBlock;
+	}
+
+	private int getFallingSupportLocationPriority(BlockPos bp) {
+		if (getConfiguredStageType() != StageType.WIDE) {
+			return 0;
+		}
+		int dy = bp.getY() - position.getY();
+		if (dy == -1 && !wouldWideStabilizerBlockBottomLayer(bp.down(2))) {
+			return 0;
+		}
+		if (dy == 3) {
+			return 1;
+		}
+		if (dy == -4) {
+			return 2;
+		}
+		return 3;
+	}
+
+	private boolean canLocationUseNoteId(BlockPos bp, int noteId) {
+		if (getConfiguredStageType() != StageType.WIDE) {
+			return true;
+		}
+		boolean harpNote = noteId / 25 == Instrument.HARP.instrumentId;
+		if (isWideTopHarpLayer(bp) != harpNote) {
+			return false;
+		}
+		if (Config.getConfig().noteblockDetectionMode == NoteblockDetectionMode.BLOCK_BASED && usesFallingSupport(noteId)) {
+			return !wouldWideStabilizerBlockBottomLayer(bp.down(2));
+		}
+		return true;
+	}
+
+	private boolean isWideTopHarpLayer(BlockPos bp) {
+		return getConfiguredStageType() == StageType.WIDE && bp.getY() - position.getY() == 5;
 	}
 
 	void loadWideBlocks(Collection<BlockPos> noteblockLocations, Collection<BlockPos> breakLocations) {
+		ArrayList<BlockPos> topHarpLayer = new ArrayList<>();
+		ArrayList<BlockPos> upperInstrumentLayer = new ArrayList<>();
+		ArrayList<BlockPos> lowerInstrumentLayer = new ArrayList<>();
+		ArrayList<BlockPos> bottomInstrumentLayer = new ArrayList<>();
+
 		for (int dx = -5; dx <= 5; dx++) {
 			for (int dz = -5; dz <= 5; dz++) {
-				if (withinBreakingDist(dx, 2, dz)) {
-					noteblockLocations.add(new BlockPos(position.getX() + dx, position.getY() + 2, position.getZ() + dz));
-					if (withinBreakingDist(dx, -1, dz)) {
-						noteblockLocations.add(new BlockPos(position.getX() + dx, position.getY() - 1, position.getZ() + dz));
-						breakLocations.add(new BlockPos(position.getX() + dx, position.getY() + 0, position.getZ() + dz));
-						breakLocations.add(new BlockPos(position.getX() + dx, position.getY() + 1, position.getZ() + dz));
-					}
-					else if (withinBreakingDist(dx, 0, dz)) {
-						noteblockLocations.add(new BlockPos(position.getX() + dx, position.getY() + 0, position.getZ() + dz));
-						breakLocations.add(new BlockPos(position.getX() + dx, position.getY() + 1, position.getZ() + dz));
-					}
+				if (isWideTopHarpColumn(dx, dz)) {
+					topHarpLayer.add(position.add(dx, 5, dz));
 				}
-				if (withinBreakingDist(dx, -3, dz)) {
-					noteblockLocations.add(new BlockPos(position.getX() + dx, position.getY() - 3, position.getZ() + dz));
+				if (isWideUpperInstrumentColumn(dx, dz)) {
+					upperInstrumentLayer.add(position.add(dx, 3, dz));
+					breakLocations.add(position.add(dx, 2, dz));
+					breakLocations.add(position.add(dx, 4, dz));
 				}
-				if (withinBreakingDist(dx, 4, dz)) {
-					noteblockLocations.add(new BlockPos(position.getX() + dx, position.getY() + 4, position.getZ() + dz));
+				if (isWideLowerInstrumentColumn(dx, dz)) {
+					lowerInstrumentLayer.add(position.add(dx, -1, dz));
+					breakLocations.add(position.add(dx, -2, dz));
+					breakLocations.add(position.add(dx, 0, dz));
+				}
+				if (isWideBottomInstrumentColumn(dx, dz)) {
+					bottomInstrumentLayer.add(position.add(dx, -4, dz));
+					breakLocations.add(position.add(dx, -5, dz));
+					breakLocations.add(position.add(dx, -3, dz));
 				}
 			}
 		}
+
+		sortLayerByDistance(topHarpLayer);
+		sortLayerByDistance(upperInstrumentLayer);
+		sortLayerByDistance(lowerInstrumentLayer);
+		sortLayerByDistance(bottomInstrumentLayer);
+
+		noteblockLocations.addAll(topHarpLayer);
+		noteblockLocations.addAll(upperInstrumentLayer);
+		noteblockLocations.addAll(lowerInstrumentLayer);
+		noteblockLocations.addAll(bottomInstrumentLayer);
+	}
+
+	private boolean isWideTopHarpColumn(int dx, int dz) {
+		return Math.abs(dx) <= 2 && Math.abs(dz) <= 2;
+	}
+
+	private boolean isWideUpperInstrumentColumn(int dx, int dz) {
+		return isWideLowerInstrumentColumn(dx, dz);
+	}
+
+	private boolean isWideLowerInstrumentColumn(int dx, int dz) {
+		return Math.abs(dx) <= 5 && Math.abs(dz) <= 5
+				&& !((Math.abs(dx) == 5 && Math.abs(dz) >= 4) || (Math.abs(dz) == 5 && Math.abs(dx) >= 4));
+	}
+
+	private boolean isWideBottomInstrumentColumn(int dx, int dz) {
+		int adx = Math.abs(dx);
+		int adz = Math.abs(dz);
+		if (adz > 3) {
+			return false;
+		}
+		int radius = adz == 3 ? 1 : adz == 2 ? 2 : 3;
+		return adx <= radius;
+	}
+
+	private boolean wouldWideStabilizerBlockBottomLayer(BlockPos stabilizerPos) {
+		if (getConfiguredStageType() != StageType.WIDE) {
+			return false;
+		}
+		int dy = stabilizerPos.getY() - position.getY();
+		if (dy != -3) {
+			return false;
+		}
+		return isWideBottomInstrumentColumn(stabilizerPos.getX() - position.getX(), stabilizerPos.getZ() - position.getZ());
 	}
 
 	// This code was taken from Sk8kman fork of SongPlayer
@@ -643,23 +819,11 @@ public class Stage {
 	private void filterBlockBasedNoteblockLocations(ArrayList<BlockPos> noteblockLocations) {
 		ArrayList<BlockPos> filteredLocations = new ArrayList<>();
 		for (BlockPos candidate : noteblockLocations) {
-			if (wouldCollideWithPlayer(candidate) || wouldCollideWithPlayer(candidate.down()) || wouldCollideWithPlayer(candidate.down(2))) {
+			if (wouldCollideWithPlayer(candidate) || wouldCollideWithPlayer(candidate.down())) {
 				continue;
 			}
 
-			boolean conflicts = false;
-			for (BlockPos selected : filteredLocations) {
-				if (candidate.getX() == selected.getX()
-						&& candidate.getZ() == selected.getZ()
-						&& Math.abs(candidate.getY() - selected.getY()) < 3) {
-					conflicts = true;
-					break;
-				}
-			}
-
-			if (!conflicts) {
-				filteredLocations.add(candidate);
-			}
+			filteredLocations.add(candidate);
 		}
 
 		noteblockLocations.clear();
@@ -708,8 +872,10 @@ public class Stage {
 	}
 
 	private void addFallingBlockStabilizerIfNeeded(BlockPos supportPos, BlockState supportState) {
-		if (requiresStabilizer(supportState) && needsStabilizer(supportPos)) {
-			requiredInstrumentBlocks.put(supportPos.down(), FALLING_BLOCK_STABILIZER);
+		BlockPos stabilizerPos = supportPos.down();
+		if (requiresStabilizer(supportState) && needsStabilizer(supportPos) && !wouldWideStabilizerBlockBottomLayer(stabilizerPos)) {
+			requiredInstrumentBlocks.put(stabilizerPos, FALLING_BLOCK_STABILIZER);
+			fallingBlockStabilizerPositions.add(stabilizerPos);
 		}
 	}
 
@@ -748,7 +914,7 @@ public class Stage {
 				// 计算noteId (instrumentId * 25 + pitch)
 				int noteId = instrument.instrumentId * 25 + pitch;
 
-				if (noteId >= 0 && noteId < 400 && missingNotes.contains(noteId)) {
+				if (noteId >= 0 && noteId < 400 && missingNotes.contains(noteId) && canLocationUseNoteId(nbPos, noteId)) {
 					missingNotes.remove(noteId);
 					noteblockPositions.put(noteId, nbPos);
 				} else {

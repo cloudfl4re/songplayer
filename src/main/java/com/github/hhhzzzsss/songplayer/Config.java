@@ -4,7 +4,6 @@ import com.github.hhhzzzsss.songplayer.playing.Stage;
 import com.github.hhhzzzsss.songplayer.playing.NoteblockDetectionMode;
 import com.google.gson.Gson;
 
-import java.io.BufferedReader;
 import java.io.BufferedWriter;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -22,7 +21,7 @@ public class Config {
     public boolean showFakePlayer = false;
     public boolean loopPlaylists = false;
     public boolean shufflePlaylists = false;
-    public Stage.StageType stageType = Stage.StageType.DEFAULT;
+    public Stage.StageType stageType = Stage.StageType.WIDE;
     public boolean swing = false;
     public boolean rotate = false;
     public int velocityThreshold = 0;
@@ -55,9 +54,15 @@ public class Config {
     }
 
     public static void loadConfig() throws IOException {
-        BufferedReader reader = Files.newBufferedReader(CONFIG_FILE);
-        config = gson.fromJson(reader, Config.class);
-        reader.close();
+        String configJson = Files.readString(CONFIG_FILE)
+                .replace("\"stageType\":\"DEFAULT\"", "\"stageType\":\"WIDE\"")
+                .replace("\"stageType\":\"NORMAL\"", "\"stageType\":\"WIDE\"")
+                .replace("\"stageType\":\"SPHERICAL\"", "\"stageType\":\"SPECIAL\"")
+                .replace("\"stageType\":\"SPEICAL\"", "\"stageType\":\"SPECIAL\"");
+        config = gson.fromJson(configJson, Config.class);
+        if (config.stageType == null) {
+            config.stageType = Stage.StageType.WIDE;
+        }
     }
 
     public static void saveConfig() throws IOException {

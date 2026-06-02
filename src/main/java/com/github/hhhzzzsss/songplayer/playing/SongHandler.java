@@ -726,7 +726,7 @@ public class SongHandler {
                 if (bp.equals(noteblockPos)) {
                     return 1; // Note block
                 }
-                if (bp.equals(noteblockPos.down(2))) {
+                if (lastStage.fallingBlockStabilizerPositions.contains(bp) || bp.equals(noteblockPos.down(2))) {
                     return 3; // Falling-block stabilizer
                 }
             }
@@ -959,13 +959,16 @@ public class SongHandler {
         SongPlayer.MC.interactionManager.clickCreativeStack(stack, 36 + slot);
     }
     private void placeBlock(BlockPos bp) {
-        double fx = Math.max(0.0, Math.min(1.0, (lastStage.position.getX() + 0.5 - bp.getX())));
-        double fy = Math.max(0.0, Math.min(1.0, (lastStage.position.getY() + 0.0 - bp.getY())));
-        double fz = Math.max(0.0, Math.min(1.0, (lastStage.position.getZ() + 0.5 - bp.getZ())));
+        placeBlock(bp, lastStage.position.getX() + 0.5, lastStage.position.getY(), lastStage.position.getZ() + 0.5);
+    }
+    private void placeBlock(BlockPos bp, double originX, double originY, double originZ) {
+        double fx = Math.max(0.0, Math.min(1.0, (originX - bp.getX())));
+        double fy = Math.max(0.0, Math.min(1.0, (originY - bp.getY())));
+        double fz = Math.max(0.0, Math.min(1.0, (originZ - bp.getZ())));
         fx += bp.getX();
         fy += bp.getY();
         fz += bp.getZ();
-        doRotateIfNeeded(fx, fy, fz);
+        doRotateIfNeeded(fx, fy, fz, originX, originY, originZ);
         SongPlayer.MC.interactionManager.interactBlock(SongPlayer.MC.player, Hand.MAIN_HAND, new BlockHitResult(new Vec3d(fx, fy, fz), Direction.UP, bp, false));
         doSwingIfNeeded();
     }
@@ -1019,10 +1022,13 @@ public class SongHandler {
     }
 
     private void doRotateIfNeeded(double lookX, double lookY, double lookZ) {
+        doRotateIfNeeded(lookX, lookY, lookZ, lastStage.position.getX() + 0.5, lastStage.position.getY(), lastStage.position.getZ() + 0.5);
+    }
+    private void doRotateIfNeeded(double lookX, double lookY, double lookZ, double originX, double originY, double originZ) {
         if (Config.getConfig().rotate) {
-            double d = lookX - (lastStage.position.getX() + 0.5);
-            double e = lookY - (lastStage.position.getY() + SongPlayer.MC.player.getStandingEyeHeight());
-            double f = lookZ - (lastStage.position.getZ() + 0.5);
+            double d = lookX - originX;
+            double e = lookY - (originY + SongPlayer.MC.player.getStandingEyeHeight());
+            double f = lookZ - originZ;
             double g = Math.sqrt(d * d + f * f);
             float pitch = MathHelper.wrapDegrees((float) (-(MathHelper.atan2(e, g) * 57.2957763671875)));
             float yaw = MathHelper.wrapDegrees((float) (MathHelper.atan2(f, d) * 57.2957763671875) - 90.0f);
@@ -1032,11 +1038,14 @@ public class SongHandler {
                 fakePlayer.setHeadYaw(yaw);
             }
             // Send on ClientConnection instead of networkHandler because mixin overrides sendPacket on networkHandler
-            SongPlayer.MC.player.networkHandler.getConnection().send(new PlayerMoveC2SPacket.Full(
-                    lastStage.position.getX() + 0.5, lastStage.position.getY(), lastStage.position.getZ() + 0.5,
-                    yaw, pitch,
-                    true, false));
+            sendMovementPacket(originX, originY, originZ, yaw, pitch);
         }
+    }
+    private void sendMovementPacket(double x, double y, double z, float yaw, float pitch) {
+        SongPlayer.MC.player.networkHandler.getConnection().send(new PlayerMoveC2SPacket.Full(
+                x, y, z,
+                yaw, pitch,
+                true, false));
     }
     private void doSwingIfNeeded() {
         if (Config.getConfig().swing) {
