@@ -718,7 +718,8 @@ public class Stage {
 	}
 
 	private boolean needsStabilizer(BlockPos supportPos) {
-		return SongPlayer.MC.world.getBlockState(supportPos.down()).isAir();
+		BlockState belowSupportState = SongPlayer.MC.world.getBlockState(supportPos.down());
+		return belowSupportState.isAir() || belowSupportState.isLiquid();
 	}
 
 	/**
